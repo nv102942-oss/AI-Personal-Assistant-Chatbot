@@ -1,180 +1,211 @@
 
 import streamlit as st
-import time
-from google import genai
+import requests
 
-# ---------------- PAGE SETTINGS ----------------
-
+# ---------------- PAGE CONFIG ----------------
 st.set_page_config(
     page_title="AI Personal Assistant",
     page_icon="🤖",
     layout="centered"
 )
 
-st.title("🤖 AI Personal Assistant Chatbot")
-st.caption("Your personal AI assistant | Hindi + English")
+# ---------------- AI CONFIG ----------------
+API_URL = "https://vireonix.ai/v1/chat/completions"
+MODEL = "auto"
+
+SYSTEM_PROMPT = """
+You are a helpful AI Personal Assistant.
+Answer clearly, accurately and politely.
+You can answer questions about:
+- Education and programming
+- Computer science
+- Science and technology
+- General knowledge
+- Writing and translation
+- Career guidance
+- Everyday questions
+
+Understand Hindi, English and Hinglish.
+Reply in the language used by the user.
+If you do not know an answer, say so honestly.
+Use examples when helpful.
+"""
+
+# ---------------- CUSTOM CSS ----------------
+st.markdown("""
+<style>
+.main {
+    max-width: 900px;
+    margin: auto;
+}
+.stChatMessage {
+    border-radius: 12px;
+}
+.title {
+    text-align: center;
+    font-size: 34px;
+    font-weight: bold;
+}
+.subtitle {
+    text-align: center;
+    color: gray;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------- HEADER ----------------
+st.markdown(
+    '<div class="title">🤖 AI Personal Assistant</div>',
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    '<div class="subtitle">Your smart AI assistant</div>',
+    unsafe_allow_html=True
+)
+
+st.divider()
 
 # ---------------- SESSION STATE ----------------
-
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 # ---------------- SIDEBAR ----------------
-
 with st.sidebar:
-    st.header("⚙️ Settings")
+    st.title("⚙️ Settings")
 
-    api_key = st.text_input(
-        "Gemini API Key",
-        type="password",
-        placeholder="Paste your NEW API key here"
-    )
+    st.success("AI Service: Online AI")
 
-    st.caption("Keep your API key private.")
+    st.caption("No Gemini API key required.")
 
     if st.button("🗑️ Clear Chat", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
 
-# ---------------- DISPLAY CHAT HISTORY ----------------
+    st.divider()
 
+    st.markdown("### About")
+    st.write(
+        "This AI assistant can answer questions "
+        "in Hindi, English and Hinglish."
+    )
+
+    st.caption("Powered by Vireonix AI")
+
+# ---------------- DISPLAY CHAT ----------------
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# ---------------- CHAT INPUT ----------------
+# ---------------- AI FUNCTION ----------------
+def get_ai_response(messages):
 
-user_prompt = st.chat_input("Ask anything...")
+    api_messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+        }
+    ]
 
-if user_prompt:
+    # Send recent conversation context
+    api_messages.extend(messages[-12:])
 
-    if not api_key.strip():
-        st.warning("Please enter your Gemini API key in Settings.")
+    payload = {
+        "model": MODEL,
+        "messages": api_messages,
+        "temperature": 0.7,
+        "max_tokens": 1500
+    }
 
-    else:
+    headers = {
+        "Content-Type": "application/json"
+    }
 
-        # Save user message
-        st.session_state.messages.append({
-            "role": "user",
-            "content": user_prompt
-        })
-
-        with st.chat_message("user"):
-            st.markdown(user_prompt)
-
-        # Prepare conversation
-        conversation = []
-
-        for item in st.session_state.messages[-12:]:
-            role = "User" if item["role"] == "user" else "Assistant"
-            conversation.append(
-                f"{role}: {item['content']}"
-            )
-
-        prompt = (
-            "You are a helpful and friendly personal AI assistant. "
-            "Reply in the same language as the user. "
-            "Give clear, accurate and useful answers. "
-            "If you do not know something, say so.\n\n"
-            + "\n\n".join(conversation)
+    try:
+        response = requests.post(
+            API_URL,
+            json=payload,
+            headers=headers,
+            timeout=90
         )
 
-        # ---------------- GEMINI BACKGROUND API ----------------
+        if response.status_code != 200:
+            return (
+                f"AI service error ({response.status_code}): "
+                f"{response.text[:1000]}"
+            )
 
-        with st.chat_message("assistant"):
+        data = response.json()
 
-            try:
-                client = genai.Client(
-                    api_key=api_key.strip(),
-                    http_options={"timeout": 60000}
-                )
+        answer = data["choices"][0]["message"]["content"]
 
-                with st.spinner("Connecting to Gemini AI..."):
+        if isinstance(answer, list):
+            answer = "\n".join(
+                item.get("text", "")
+                for item in answer
+                if isinstance(item, dict)
+            )
 
-                    # Start background request
-                    interaction = client.interactions.create(
-                        model="gemini-3.8-flash",
-                        input=prompt,
-                        background=True
-                    )
+        if not answer:
+            return "AI returned an empty response. Please try again."
 
-                # Check background task
-                answer = None
-                attempts = 0
+        return str(answer)
 
-                progress = st.progress(0)
-                status_text = st.empty()
+    except requests.exceptions.Timeout:
+        return "Request timed out. Please try again."
 
-                while attempts < 120:
+    except requests.exceptions.ConnectionError:
+        return "Internet connection or AI service connection failed."
 
-                    if interaction.status == "completed":
-                        answer = interaction.output_text
-                        break
+    except requests.exceptions.RequestException as e:
+        return f"Network error: {str(e)}"
 
-                    if interaction.status == "failed":
-                        raise RuntimeError(
-                            "Gemini background task failed."
-                        )
+    except (KeyError, IndexError, TypeError, ValueError) as e:
+        return f"Invalid AI response: {str(e)}"
 
-                    if interaction.status != "in_progress":
-                        raise RuntimeError(
-                            "Unexpected task status: "
-                            + str(interaction.status)
-                        )
+    except Exception as e:
+        return f"Unexpected error: {str(e)}"
 
-                    time.sleep(5)
 
-                    interaction = client.interactions.get(
-                        interaction.id
-                    )
+# ---------------- CHAT INPUT ----------------
+user_input = st.chat_input(
+    "Ask me anything..."
+)
 
-                    attempts += 1
-                    progress.progress(min(attempts / 120, 1.0))
-                    status_text.write(
-                        f"AI is working... {attempts * 5} seconds"
-                    )
+if user_input:
 
-                if answer is None:
-                    raise TimeoutError(
-                        "AI took too long. Please try again."
-                    )
+    # Save user message
+    st.session_state.messages.append({
+        "role": "user",
+        "content": user_input
+    })
 
-                if not answer.strip():
-                    answer = "Sorry, AI returned an empty response."
+    # Display user message
+    with st.chat_message("user"):
+        st.markdown(user_input)
 
-                progress.empty()
-                status_text.empty()
+    # Generate AI response
+    with st.chat_message("assistant"):
 
-                st.markdown(answer)
+        with st.spinner("🤖 AI is thinking..."):
 
-                # Save AI response
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": answer
-                })
+            answer = get_ai_response(
+                st.session_state.messages
+            )
 
-            except Exception as error:
+        st.markdown(answer)
 
-                st.error("Gemini AI request failed.")
+    # Save assistant response
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": answer
+    })
 
-                st.write("Technical error:")
-                st.code(str(error))
+    st.rerun()
 
-                st.info(
-                    "Check your internet, API key and Gemini API access."
-                )
+# ---------------- FOOTER ----------------
+st.divider()
 
-# ---------------- WELCOME MESSAGE ----------------
-
-if not st.session_state.messages:
-    st.info(
-        "👋 Welcome! Try asking: "
-        "Explain Artificial Intelligence in simple Hindi."
-    )
-
-    st.markdown("### Example questions")
-
-    st.write("- What is Artificial Intelligence?")
-    st.write("- Explain Python in Hindi.")
-    st.write("- Write a C++ program.")
-    st.write("- What is Machine Learning?")
+st.caption(
+    "AI Personal Assistant | Built with Python and Streamlit"
+)
