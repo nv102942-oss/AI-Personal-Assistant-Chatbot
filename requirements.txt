@@ -1,1 +1,5 @@
-streamlit\ngoogle-genai\ngoogle-genai
+
+streamlit
+google-genai
+python-dotenv
+requests
